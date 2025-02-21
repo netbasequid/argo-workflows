@@ -10855,6 +10855,18 @@ spec:
 
 // TestWorkflowNeedReconcile test whether a workflow need reconcile taskresults.
 func TestWorkflowNeedReconcile(t *testing.T) {
+	t.Run("hasIncompleteTaskResult", func(t *testing.T) {
+		hasIncompleteTaskResult := true
+		testWorkflowNeedReconcileHelper(t, hasIncompleteTaskResult)
+	})
+
+	t.Run("hasNoTaskResult", func(t *testing.T) {
+		hasIncompleteTaskResult := false
+		testWorkflowNeedReconcileHelper(t, hasIncompleteTaskResult)
+	})
+}
+
+func testWorkflowNeedReconcileHelper(t *testing.T, hasIncompleteTaskResult bool) {
 	cancel, controller := newController()
 	defer cancel()
 	ctx := context.Background()
