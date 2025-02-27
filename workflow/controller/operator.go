@@ -1425,6 +1425,36 @@ func (woc *wfOperationCtx) assessNodeStatus(ctx context.Context, pod *apiv1.Pod,
 		new.PodIP = pod.Status.PodIP
 	}
 
+	// QUID: https://github.com/netbasequid/canal-flow/issues/709
+	//       remove the patch after https://github.com/argoproj/argo-workflows/pull/14026 fixed
+	// Controller can call operate for a workflow when a node's pod status has updated but the
+	// corresponding task result not yet updated in informer cache. The next node won't be able
+	// to resolve the output and thus result in "unable to resolve outputs from scope" error.
+	// In normeal cases, when operator calls taskResultReconciliation(), if the task result has
+	// not been completed it should still received a task result that note the pod as incompleted,
+	// so TaskResultsCompletionStatus would have the key with value = false.
+	// However, when the api server is busy, we might not yet received any task result when pod
+	// finished and thus TaskResultsCompletionStatus does not have the key.
+	// In this case, we should see the task result incompleted.
+	if resultName := woc.nodeID(pod); new.Phase == wfv1.NodeSucceeded &&
+		tmpl.HasOutputs() && !woc.wf.Status.IsTaskResultInited(resultName) {
+		log.Warnf("A successful task with outputs is missing from TaskResultsCompletionStatus. Mark it as incomplete: %s", resultName)
+		// error scenario: a pod for a step in a workflow has completed, and its task
+		// result are properly created and finalized by its wait container (judging from
+		// the exit status of the wait container), however, the task result informer in
+		// the controller leader has not received any updates about it (due to overloaded
+		// api server or etcd).
+		//
+		// the change is to forcefully mark the workflow having incomplete TaskResult in
+		// assessNodeStatus.
+		//
+		// this fix doesn't handle the case when a pod failed, there are too many
+		// potentially failure scenarios (like the wait container might not be able to
+		// insert a task result). plus, a retry is probably needed when there are
+		// failures. the loss is probably not as great as a successful one.
+		woc.wf.Status.MarkTaskResultIncomplete(resultName)
+	}
+
 	new.HostNodeName = pod.Spec.NodeName
 
 	if !new.Progress.IsValid() {

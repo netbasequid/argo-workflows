@@ -14,6 +14,8 @@ import (
 	envutil "github.com/argoproj/argo-workflows/v3/util/env"
 	"github.com/argoproj/argo-workflows/v3/workflow/common"
 	"github.com/argoproj/argo-workflows/v3/workflow/controller/indexes"
+
+	"github.com/argoproj/argo-workflows/v3/util/env"
 )
 
 func (wfc *WorkflowController) newWorkflowTaskResultInformer() cache.SharedIndexInformer {
@@ -37,6 +39,10 @@ func (wfc *WorkflowController) newWorkflowTaskResultInformer() cache.SharedIndex
 			options.ResourceVersion = ""
 		},
 	)
+	// QUID: https://github.com/netbasequid/canal-flow/issues/709
+	//       log the delay if the task result add event received longer than expected
+	logDelayDuration := env.LookupEnvDurationOr("LOG_DELAY_TASK_RESULT_ADD_EVENT_TIME", 0)
+	log.Infof("LOG_DELAY_TASK_RESULT_ADD_EVENT_TIME: %v", logDelayDuration)
 	//nolint:errcheck // the error only happens if the informer was stopped, and it hasn't even started (https://github.com/kubernetes/client-go/blob/46588f2726fa3e25b1704d6418190f424f95a990/tools/cache/shared_informer.go#L580)
 	informer.AddEventHandler(
 		cache.ResourceEventHandlerFuncs{
@@ -44,6 +50,11 @@ func (wfc *WorkflowController) newWorkflowTaskResultInformer() cache.SharedIndex
 				result := new.(*wfv1.WorkflowTaskResult)
 				workflow := result.Labels[common.LabelKeyWorkflow]
 				wfc.wfQueue.AddRateLimited(result.Namespace + "/" + workflow)
+				if logDelayDuration > 0 {
+					if duration := time.Since(result.GetCreationTimestamp().Time); duration > logDelayDuration {
+						log.Warnf("Task result added with delay, result: %s, duration: %v", result.Name, duration)
+					}
+				}
 			},
 			UpdateFunc: func(old, new interface{}) {
 				result := new.(*wfv1.WorkflowTaskResult)
